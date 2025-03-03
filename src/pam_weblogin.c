@@ -9,6 +9,8 @@
 
 #include <security/pam_appl.h>
 #include <security/pam_modules.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 
 #include <json-parser/json.h>
 
@@ -18,6 +20,18 @@
 #include "tty.h"
 
 #include "pam_weblogin.h"
+
+unsigned char *mx_hmac_sha256(const void *key, int keylen,
+	const char *data, int datalen,
+	unsigned char *result, unsigned int *resultlen) {
+	unsigned char test[1024];
+	strncpy((char*)test,data,sizeof(test));
+
+		return HMAC(EVP_sha256(), key, keylen, test, datalen, result, resultlen);
+}
+
+
+
 
 PAM_EXTERN int pam_sm_setcred(UNUSED pam_handle_t *pamh, UNUSED int flags, UNUSED int argc, UNUSED const char *argv[])
 {
@@ -29,12 +43,14 @@ PAM_EXTERN int pam_sm_acct_mgmt(UNUSED pam_handle_t *pamh, UNUSED int flags, UNU
 	return PAM_SUCCESS;
 }
 
+
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, UNUSED int flags, int argc, const char *argv[])
 {
 	char *session_id = NULL;
 	char *challenge = NULL;
 	char *info = NULL;
 	char *authorization = NULL;
+	char *hmacsign = NULL;
 	bool cached = false;
 	int pam_result = PAM_AUTH_ERR;
 	char *pam_user = NULL;
@@ -116,11 +132,22 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, UNUSED int flags, int arg
 				cfg->attribute, rhost, cfg->cache_duration, cfg->cache_per_rhost ? "true" : "false", TOSTR(GIT_COMMIT), TOSTR(JSONPARSER_GIT_COMMIT));
 	}
 
+	unsigned char *hmacresult = NULL;
+	unsigned int hmacresultlen = -1;
+	
+	hmacresult = mx_hmac_sha256((const void *) cfg->sharedkey, strlen((char *) cfg->sharedkey), data, strlen((char *)data), hmacresult, &hmacresultlen);
+
+	char hex[hmacresultlen *2 +1];
+	for(unsigned int j = 0; j < hmacresultlen; j++)
+    	sprintf(hex+2*j, "%.2x", hmacresult [j]);
+	
+	hmacsign = str_printf("HMAC-Signature: %s",hex );
+
 	/* Request auth session_id/challenge */
 	json_char *challenge_response = (json_char *) API(
 		url,
 		"POST",
-		(char *[]){ "Content-Type: application/json", authorization, NULL},
+		(char *[]){ "Content-Type: application/json", authorization, hmacsign, NULL},
 		data,
 		pamh
 	);
@@ -190,11 +217,22 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, UNUSED int flags, int arg
 		data = str_printf("{\"session_id\":\"%s\",\"pin\":\"%s\"}", session_id, code);
 		free(code);
 
+		unsigned char *hmacresult2 = NULL;
+		hmacresultlen = -1;
+			
+		hmacresult2 = mx_hmac_sha256((const void *)cfg->sharedkey, strlen((char *) cfg->sharedkey), data, strlen((char *)data), hmacresult2, &hmacresultlen);
+		
+		char hex2[hmacresultlen *2 +1];
+		for(unsigned int j = 0; j < hmacresultlen; j++)
+			sprintf(hex2+2*j, "%.2x", hmacresult2 [j]);
+		
+		hmacsign = str_printf("HMAC-Signature: %s",hex2 );
+		
 		/* Request check code result */
 		json_char *verify_response = (json_char *) API(
 			url,
 			"POST",
-			(char *[]){ "Content-Type: application/json", authorization, NULL},
+			(char *[]){ "Content-Type: application/json", authorization, hmacsign, NULL},
 			data,
 			pamh
 		);

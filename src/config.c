@@ -99,6 +99,7 @@ Config *getConfig(const char *filename)
 
 	cfg->url = NULL;
 	cfg->token = NULL;
+	cfg->sharedkey= NULL;
 	cfg->attribute = NULL;
 	cfg->cache_duration = DEFAULT_CACHE_DURATION;
 	cfg->cache_per_rhost = false;
@@ -212,6 +213,13 @@ Config *getConfig(const char *filename)
 			{
 				cfg->retries = (unsigned int)labs(strtol(val, NULL, 10));
 				log_message(LOG_DEBUG, "retries: %d", cfg->retries);
+			}
+
+			/* Check for retries config */
+			else if (!strcmp(key, "sharedkey"))
+			{
+				cfg->sharedkey = strdup(val);
+				log_message(LOG_DEBUG, "sharedkey: %s", cfg->sharedkey);
 			}
 
 
